@@ -4,6 +4,7 @@
 # Fetch PR details, diffs, and post review comments.
 # ─────────────────────────────────────────────────────────────
 
+import difflib
 import base64
 import requests
 from typing import List, Optional
@@ -51,8 +52,6 @@ class AzureDevOpsClient:
     ) -> dict:
         """
         Central HTTP request handler.
-
-        🧠 CONCEPT: Single responsibility
         All HTTP calls go through here — one place for
         error handling, timeouts, and response parsing.
         """
@@ -104,10 +103,6 @@ class AzureDevOpsClient:
     def get_pull_request(self, pr_id: int) -> PullRequest:
         """
         Fetches PR metadata and all changed files with diffs.
-
-        🧠 CONCEPT: API versioning
-        Azure DevOps requires ?api-version=7.1 on every call.
-        Without it, the API returns 400 Bad Request.
         """
         print(f"🔍 Fetching PR #{pr_id}...")
 
@@ -130,10 +125,10 @@ class AzureDevOpsClient:
         """
         Fetches changed files and their diffs for a PR.
 
-        🧠 CONCEPT: Azure DevOps diff flow
+        Azure DevOps diff flow:
         Step 1: Get iterations (each push to PR = one iteration)
         Step 2: Get changed files in the latest iteration
-        Step 3: For each file, fetch actual content/diff
+        Step 3: For each file, fetch before + after and build diff
         """
         # Step 1: Get iterations
         iter_url = (
@@ -146,10 +141,9 @@ class AzureDevOpsClient:
             print("⚠️  No iterations found for this PR")
             return []
 
-        # Get latest iteration id
-        # 🧠 CONCEPT: max() with lambda key
+        # 🧠 CONCEPT: max() with lambda
         # lambda x: x["id"] is a tiny anonymous function
-        # max() uses it to compare items by their "id" field
+        # max() uses it to find the iteration with the highest id
         latest_iteration = max(
             iterations["value"],
             key=lambda x: x["id"]
@@ -175,7 +169,7 @@ class AzureDevOpsClient:
 
             change_type = change.get("changeType", "edit")
 
-            # Fetch actual diff for this file
+            # Fetch the diff for this file
             diff = self._get_file_diff(pr_id, iteration_id, filename)
 
             files.append(PRFile(
@@ -194,76 +188,163 @@ class AzureDevOpsClient:
         filename: str
     ) -> Optional[str]:
         """
-        Fetches the actual content/diff for a specific file.
+        Fetches ONLY the changed lines for a file.
+
+        Strategy:
+        1. Fetch file content BEFORE the PR (target branch)
+        2. Fetch file content AFTER the PR (source branch)
+        3. Use difflib to compare and show only changes + context
 
         🧠 CONCEPT: Best-effort fetching
-        If this fails for one file, we catch the exception
-        and return None — the review continues with other files.
+        If this fails for one file we catch the exception and
+        return None so the review continues with other files.
         Never let one file crash the whole review.
         """
         try:
-            # Get PR data to find commit IDs
+            # File as it was BEFORE this PR (target/master)
+            original = self._fetch_file_at_commit(
+                filename,
+                is_target=True,
+                pr_id=pr_id
+            )
+
+            # File as it is AFTER this PR (source/feature branch)
+            modified = self._fetch_file_at_commit(
+                filename,
+                is_target=False,
+                pr_id=pr_id
+            )
+
+            if original is None and modified is None:
+                return f"[Could not retrieve content for {filename}]"
+
+            # Build diff using configured context lines
+            return self._build_diff(
+                filename,
+                original or "",
+                modified or "",
+                context_lines=self.config.diff_context_lines
+            )
+
+        except Exception as e:
+            print(f"   ⚠️  Could not fetch diff for {filename}: {e}")
+            return None
+
+    def _fetch_file_at_commit(
+        self,
+        filename: str,
+        is_target: bool,
+        pr_id: int
+    ) -> Optional[str]:
+        """
+        Fetches raw file content at either end of a PR.
+
+        🧠 CONCEPT: is_target flag
+        True  = target branch = master = file BEFORE the PR
+        False = source branch = feature = file AFTER the PR
+        Comparing before vs after gives us the real diff.
+
+        🧠 CONCEPT: dict unpacking with **
+        {**self.headers, "Accept": "text/plain"} creates a NEW dict
+        copying all of self.headers then overriding just Accept.
+        This avoids modifying self.headers for other requests.
+        """
+        try:
             pr_url = f"{self.git_url}/pullrequests/{pr_id}?api-version=7.1"
             pr_data = self._make_request("GET", pr_url)
 
-            # These are the commit hashes at each end of the PR
-            last_merge = pr_data.get("lastMergeSourceCommit", {}).get("commitId")
-            first_commit = pr_data.get("lastMergeTargetCommit", {}).get("commitId")
+            if is_target:
+                # Before: what exists on master/main right now
+                commit_id = pr_data.get(
+                    "lastMergeTargetCommit", {}
+                ).get("commitId")
+            else:
+                # After: what the PR proposes to merge in
+                commit_id = pr_data.get(
+                    "lastMergeSourceCommit", {}
+                ).get("commitId")
 
-            if not last_merge or not first_commit:
-                return f"[Could not retrieve diff for {filename}]"
+            if not commit_id:
+                return None
 
-            # Fetch diff between target and source commits
-            diff_url = (
-                f"{self.git_url}/diffs/commits"
-                f"?api-version=7.1"
-                f"&baseVersion={first_commit}"
-                f"&baseVersionType=commit"
-                f"&targetVersion={last_merge}"
-                f"&targetVersionType=commit"
+            content_url = (
+                f"{self.git_url}/items"
+                f"?path={filename}"
+                f"&version={commit_id}"
+                f"&versionType=commit"
+                f"&api-version=7.1"
             )
-            diff_data = self._make_request("GET", diff_url)
 
-            # Find this specific file in the diff results
-            for change in diff_data.get("changes", []):
-                item = change.get("item", {})
-                if item.get("path") == filename:
+            raw_headers = {**self.headers, "Accept": "text/plain"}
+            response = requests.get(
+                content_url,
+                headers=raw_headers,
+                timeout=30
+            )
 
-                    if change.get("changeType") == "delete":
-                        return f"[File deleted: {filename}]"
+            if response.status_code == 200:
+                return response.text
+            elif response.status_code == 404:
+                # New file added in PR — did not exist before
+                return None
 
-                    # Fetch file content at the source commit
-                    content_url = (
-                        f"{self.git_url}/items"
-                        f"?path={filename}"
-                        f"&version={last_merge}"
-                        f"&versionType=commit"
-                        f"&api-version=7.1"
-                    )
-                    # content_response = requests.get(
-                    #     content_url,
-                    #     headers=self.headers,
-                    #     timeout=30
-                    # )
-                    raw_headers = {**self.headers, "Accept": "text/plain"}
-                    content_response = requests.get(
-                        content_url,
-                        headers=raw_headers,
-                        timeout=30
-                    )
-
-                    if content_response.status_code == 200:
-                        # 🧠 CONCEPT: String slicing
-                        # content[:3000] = first 3000 characters
-                        # Prevents sending huge files to the AI
-                        return content_response.text[:3000]
-
-            return f"[No diff found for {filename}]"
-
-        except Exception as e:
-            # Broad except is intentional here — diff is best-effort
-            print(f"   ⚠️  Could not fetch diff for {filename}: {e}")
             return None
+
+        except Exception:
+            return None
+
+    def _build_diff(
+        self,
+        filename: str,
+        original: str,
+        modified: str,
+        context_lines: int = 3
+    ) -> str:
+        """
+        Builds a unified diff between original and modified content.
+
+        🧠 CONCEPT: difflib.unified_diff
+        Python built-in module — no install needed.
+        Produces standard git-style diff output.
+
+        🧠 CONCEPT: context_lines (the n= parameter)
+        Controls how many UNCHANGED lines appear around each change.
+
+        context_lines=0 (diff only):     context_lines=3 (default):
+        ────────────────────────         ──────────────────────────
+        @@ -4,0 +5 @@                    @@ -2,4 +2,5 @@
+        +gem 'rake'                       gem 'rspec-core'
+                                          gem 'rspec-expectations'
+                                          gem 'rake'
+                                         +gem 'rake'
+
+        🧠 CONCEPT: Ternary expression
+        value_if_true if condition else value_if_false
+        Same as a 2-line if/else but on one line.
+        """
+        original_lines = original.splitlines(keepends=True)
+        modified_lines = modified.splitlines(keepends=True)
+
+        diff_lines = list(difflib.unified_diff(
+            original_lines,
+            modified_lines,
+            fromfile=f"before/{filename}",
+            tofile=f"after/{filename}",
+            n=context_lines,
+            #lineterm=""
+        ))
+
+        if not diff_lines:
+            return "[No changes detected in file content]"
+
+        # Label so the AI knows what context mode was used
+        context_label = (
+            "diff only — no context lines"
+            if context_lines == 0
+            else f"{context_lines} lines of context per change"
+        )
+
+        return f"[{context_label}]\n" + "".join(diff_lines)
 
     def post_pr_comment(
         self,
@@ -274,7 +355,7 @@ class AzureDevOpsClient:
         """
         Posts a review comment to a PR thread.
 
-        🧠 CONCEPT: Two posting modes
+        Two modes:
         thread_id=None → creates a NEW thread on the PR
         thread_id=123  → replies to an EXISTING thread
                          (used when replying to @ai-reviewer comment)
@@ -282,14 +363,12 @@ class AzureDevOpsClient:
         formatted = self._format_review(review_text)
 
         if thread_id:
-            # Reply to existing thread
             url = (
                 f"{self.git_url}/pullrequests/{pr_id}"
                 f"/threads/{thread_id}/comments?api-version=7.1"
             )
             payload = {"content": formatted}
         else:
-            # Create a brand new thread
             url = (
                 f"{self.git_url}/pullrequests/{pr_id}"
                 f"/threads?api-version=7.1"

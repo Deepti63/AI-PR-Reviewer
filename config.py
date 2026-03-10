@@ -20,6 +20,7 @@ class AzureDevOpsConfig:
     project: str        # your project name
     repo: str           # your repo name
     pat: str            # Personal Access Token
+    diff_context_lines: int = 3 
 
 
 @dataclass
@@ -44,6 +45,7 @@ def load_config() -> AppConfig:
         project=os.environ.get("AZURE_DEVOPS_PROJECT", ""),
         repo=os.environ.get("AZURE_DEVOPS_REPO", ""),
         pat=os.environ.get("AZURE_DEVOPS_PAT", ""),
+        diff_context_lines=int(os.environ.get("DIFF_CONTEXT_LINES", "3")),
     )
 
     mistral_config = MistralConfig(
