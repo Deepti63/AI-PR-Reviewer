@@ -1,0 +1,18 @@
+﻿{
+  "eventType": "ms.vss-code.pull-request-comment-event",
+  "resource": {
+    "comment": {
+      "id": 1,
+      "content": "@ai-reviewer"
+    },
+    "pullRequest": {
+      "pullRequestId": 1,
+      "repository": {
+        "id": "repo-id",
+        "project": {
+          "name": "devops"
+        }
+      }
+    }
+  }
+}

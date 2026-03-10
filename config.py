@@ -67,7 +67,7 @@ def validate_config(config: AppConfig) -> None:
         "AZURE_DEVOPS_PROJECT": config.azure.project,
         "AZURE_DEVOPS_REPO": config.azure.repo,
         "AZURE_DEVOPS_PAT": config.azure.pat,
-        "WEBHOOK_SECRET": config.webhook_secret,
+       # "WEBHOOK_SECRET": config.webhook_secret,
     }
 
     missing = [name for name, value in required.items() if not value]
@@ -78,6 +78,11 @@ def validate_config(config: AppConfig) -> None:
             f"   {', '.join(missing)}\n"
             f"   → Copy .env.example to .env and fill in your values."
         )
+    
+    if not config.webhook_secret:
+        print("⚠️  WEBHOOK_SECRET not set — webhook validation disabled")
+        print("   Set it in .env before deploying to production!")
+
 
     print("✅ Config loaded and validated successfully!")
 

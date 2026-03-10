@@ -83,3 +83,4 @@ class WebhookComment:
     thread_id: int          # the thread this comment belongs to
     project: str
     repo_id: str
+    context_lines: int | None = None
