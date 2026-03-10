@@ -2,7 +2,7 @@
 
 Automated code review powered by Mistral AI — triggered by commenting `@ai-reviewer` on any Pull Request.
 
-Basic function of this code is if you commment @aiprreview in youe pull request it submits PR for reviews from Azure DevOps to your AI in our case its open source ollama. It is a Python script that leverages Open source AI to automatically review pr changes by sending git diff to AI. It pushes pr through our prompt to review change and provide structured feedback as a comment on your PR .
+Basic function of this code is if you commment @ai-reviewer in youe pull request it submits PR for reviews from Azure DevOps to your AI in our case its open source ollama (Mistral). Backend uses Python script that leverages Open source AI to automatically review pr changes by sending git diff to AI. It pushes pr through our prompt to review change and provide structured feedback as a comment on your PR . A screenshot is added at the end of this to show the expected output.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue?style=flat-square&logo=python)
 ![Flask](https://img.shields.io/badge/Flask-3.0-green?style=flat-square&logo=flask)
@@ -173,4 +173,8 @@ This project was built as a learning exercise covering:
 ## 👩‍💻 Author
 
 **Deepti Sinha** — Enjoying the journey of building AI-powered DevOps tooling
+
+## Output  generated automatically
+<img width="992" height="907" alt="image" src="https://github.com/user-attachments/assets/a2043ca8-c031-4509-9178-11165acaaecc" />
+
 
