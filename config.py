@@ -1,39 +1,25 @@
 # config.py
-# ─────────────────────────────────────────────────────────────
-# PURPOSE: Single source of truth for all app configuration.
-# Loads from .env file and validates everything is present
-# before the app does any real work.
-# ─────────────────────────────────────────────────────────────
-
 import os
 from dotenv import load_dotenv
 from dataclasses import dataclass
 
-# Load .env file into environment variables
-# Must happen before any os.environ.get() calls
 load_dotenv()
 
 
 @dataclass
-class GitHubConfig:
+class AzureDevOpsConfig:
     """
-    Holds GitHub connection settings.
+    Holds Azure DevOps connection settings.
 
-    🧠 CONCEPT: @dataclass
-    Instead of writing a full class with __init__, dataclass
-    auto-generates it. These two are identical:
-
-    # Without dataclass:             # With dataclass:
-    class GitHubConfig:              @dataclass
-        def __init__(self,           class GitHubConfig:
-            token, owner, repo):         token: str
-            self.token = token           owner: str
-            self.owner = owner           repo: str
-            self.repo = repo
+    🧠 CONCEPT: How Azure DevOps API auth works
+    Azure DevOps uses Basic Auth with a PAT token.
+    The token is base64 encoded as ":PAT" (note the colon prefix).
+    We'll handle that encoding in the client, not here.
     """
-    token: str
-    owner: str
-    repo: str
+    org_url: str        # https://dev.azure.com/deeptisimba
+    project: str        # your project name
+    repo: str           # your repo name
+    pat: str            # Personal Access Token
 
 
 @dataclass
@@ -45,31 +31,19 @@ class MistralConfig:
 
 @dataclass
 class AppConfig:
-    """
-    Master config object — passed around the whole app.
-
-    🧠 CONCEPT: Composition
-    Instead of one giant config object, we nest smaller
-    focused configs inside. Clean and organized.
-    Usage: config.github.token, config.mistral.model
-    """
-    github: GitHubConfig
+    """Master config — bundles everything together."""
+    azure: AzureDevOpsConfig
     mistral: MistralConfig
+    webhook_secret: str     # for verifying Azure DevOps webhook requests
 
 
 def load_config() -> AppConfig:
-    """
-    Reads environment variables and builds the AppConfig.
-
-    🧠 CONCEPT: -> AppConfig (return type hint)
-    This is documentation built into the code. Your IDE
-    will autocomplete config.github.token because it KNOWS
-    what type this function returns. No guessing.
-    """
-    github_config = GitHubConfig(
-        token=os.environ.get("GITHUB_TOKEN", ""),
-        owner=os.environ.get("GITHUB_REPO_OWNER", ""),
-        repo=os.environ.get("GITHUB_REPO_NAME", ""),
+    """Reads environment variables and returns a fully built AppConfig."""
+    azure_config = AzureDevOpsConfig(
+        org_url=os.environ.get("AZURE_DEVOPS_ORG_URL", ""),
+        project=os.environ.get("AZURE_DEVOPS_PROJECT", ""),
+        repo=os.environ.get("AZURE_DEVOPS_REPO", ""),
+        pat=os.environ.get("AZURE_DEVOPS_PAT", ""),
     )
 
     mistral_config = MistralConfig(
@@ -77,35 +51,23 @@ def load_config() -> AppConfig:
         model=os.environ.get("MISTRAL_MODEL", "mistral"),
     )
 
-    return AppConfig(github=github_config, mistral=mistral_config)
+    return AppConfig(
+        azure=azure_config,
+        mistral=mistral_config,
+        webhook_secret=os.environ.get("WEBHOOK_SECRET", ""),
+    )
 
 
 def validate_config(config: AppConfig) -> None:
-    """
-    Validates all required fields are present.
-    Fails LOUDLY and EARLY if anything is missing.
-
-    🧠 CONCEPT: Fail Fast
-    It's better to crash immediately with a clear message
-    than to crash later with a confusing one. Always
-    validate at the boundaries of your system.
-
-    🧠 CONCEPT: List comprehension
-    missing = [name for name, value in items if not value]
-    
-    This is shorthand for:
-    missing = []
-    for name, value in items:
-        if not value:
-            missing.append(name)
-    """
+    """Validates all required fields are present. Fails fast if missing."""
     required = {
-        "GITHUB_TOKEN": config.github.token,
-        "GITHUB_REPO_OWNER": config.github.owner,
-        "GITHUB_REPO_NAME": config.github.repo,
+        "AZURE_DEVOPS_ORG_URL": config.azure.org_url,
+        "AZURE_DEVOPS_PROJECT": config.azure.project,
+        "AZURE_DEVOPS_REPO": config.azure.repo,
+        "AZURE_DEVOPS_PAT": config.azure.pat,
+        "WEBHOOK_SECRET": config.webhook_secret,
     }
 
-    # List comprehension — collects names of empty fields
     missing = [name for name, value in required.items() if not value]
 
     if missing:
@@ -118,24 +80,15 @@ def validate_config(config: AppConfig) -> None:
     print("✅ Config loaded and validated successfully!")
 
 
-# ─────────────────────────────────────────────────────────────
-# 🧠 CONCEPT: if __name__ == "__main__"
-#
-# Python sets __name__ = "__main__" when a file is run directly
-# Python sets __name__ = "config"   when a file is imported
-#
-# This block ONLY runs on direct execution: python config.py
-# It is SKIPPED when main.py does: from config import load_config
-#
-# Use it to test individual modules without running the whole app.
-# ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     config = load_config()
     validate_config(config)
 
     print(f"\n📋 Configuration Summary:")
-    print(f"   GitHub Owner : {config.github.owner}")
-    print(f"   GitHub Repo  : {config.github.repo}")
-    print(f"   GitHub Token : {'*' * len(config.github.token)}")
-    print(f"   Mistral URL  : {config.mistral.api_url}")
-    print(f"   Mistral Model: {config.mistral.model}")
+    print(f"   Azure Org     : {config.azure.org_url}")
+    print(f"   Azure Project : {config.azure.project}")
+    print(f"   Azure Repo    : {config.azure.repo}")
+    print(f"   PAT Token     : {'*' * len(config.azure.pat)}")
+    print(f"   Mistral URL   : {config.mistral.api_url}")
+    print(f"   Mistral Model : {config.mistral.model}")
+    print(f"   Webhook Secret: {'*' * len(config.webhook_secret)}")
