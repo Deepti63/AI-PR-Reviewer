@@ -1,0 +1,10 @@
+env/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+
+# VS Code settings (optional — remove if you want to share settings)
+.vscode/
